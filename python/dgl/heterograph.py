@@ -37,6 +37,36 @@ from .view import (
 __all__ = ["DGLGraph", "combine_names"]
 
 
+class HeteroGraphIndexProxy(heterograph_index.HeteroGraphIndex):
+    def __new__(cls, gidx, graph_ref):
+        return object.__new__(cls)
+
+    def __init__(self, gidx, graph_ref):
+        if isinstance(gidx, HeteroGraphIndexProxy):
+            gidx = gidx._gidx
+        self._gidx = gidx
+        self._graph_ref = graph_ref
+        self.handle = gidx.handle
+
+    def __del__(self):
+        # Overriding to prevent ObjectBase.__del__ from double-freeing the handle owned by self._gidx
+        pass
+
+    def __getattr__(self, name):
+        attr = getattr(self._gidx, name)
+        if callable(attr):
+            def wrapper(*args, **kwargs):
+                from .backend import _tls
+                old_device = getattr(_tls, "target_device", None)
+                _tls.target_device = self._graph_ref.device
+                try:
+                    return attr(*args, **kwargs)
+                finally:
+                    _tls.target_device = old_device
+            return wrapper
+        return attr
+
+
 class DGLGraph(object):
     """Class for storing graph structure and node/edge feature data.
 
@@ -125,7 +155,7 @@ class DGLGraph(object):
 
     def _init(self, gidx, ntypes, etypes, node_frames, edge_frames):
         """Init internal states."""
-        self._graph = gidx
+        self._graph = HeteroGraphIndexProxy(gidx, self)
         self._canonical_etypes = None
         self._batch_num_nodes = None
         self._batch_num_edges = None
