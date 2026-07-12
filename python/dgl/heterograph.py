@@ -5653,6 +5653,8 @@ class DGLGraph(object):
 
         The case of heterogeneous graphs is the same.
         """
+        if getattr(self, "_device", None) is not None:
+            return self._device
         return F.to_backend_ctx(self._graph.ctx)
 
     def to(self, device, **kwargs):  # pylint: disable=invalid-name
@@ -5707,6 +5709,36 @@ class DGLGraph(object):
         """
         if device is None or self.device == device:
             return self
+
+        import torch as th
+        th_device = th.device(device)
+        if th_device.type == "mps":
+            ret = copy.copy(self)
+            ret._device = th.device("mps", th_device.index if th_device.index is not None else 0)
+            
+            new_nframes = []
+            for nframe in self._node_frames:
+                new_nframes.append(nframe.to(th_device, **kwargs))
+            ret._node_frames = new_nframes
+
+            new_eframes = []
+            for eframe in self._edge_frames:
+                new_eframes.append(eframe.to(th_device, **kwargs))
+            ret._edge_frames = new_eframes
+
+            if self._batch_num_nodes is not None:
+                new_bnn = {
+                    k: F.copy_to(num, th_device, **kwargs)
+                    for k, num in self._batch_num_nodes.items()
+                }
+                ret._batch_num_nodes = new_bnn
+            if self._batch_num_edges is not None:
+                new_bne = {
+                    k: F.copy_to(num, th_device, **kwargs)
+                    for k, num in self._batch_num_edges.items()
+                }
+                ret._batch_num_edges = new_bne
+            return ret
 
         ret = copy.copy(self)
 
